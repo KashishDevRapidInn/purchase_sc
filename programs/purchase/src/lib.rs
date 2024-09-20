@@ -1,11 +1,11 @@
 use anchor_lang::prelude::*;
-use anchor_lang::solana_program::program::invoke;
-use anchor_lang::solana_program::system_instruction;
 declare_id!("C6zXf83fM3aAac1t9AHh7AR6tYoMuB6nbYAhiMP7SV2K");
 
 #[program]
 pub mod purchase {
     use super::*;
+    use anchor_lang::solana_program::program::invoke;
+    use anchor_lang::solana_program::system_instruction;
 
     pub fn initialize_purchase(
         ctx: Context<InitializePurchase>,
@@ -14,7 +14,7 @@ pub mod purchase {
     ) -> Result<()> {
         let purchase_agreement = &mut ctx.accounts.purchase_agreement;
         purchase_agreement.seller = *ctx.accounts.user.key;
-        purchase_agreement.buyer = Pubkey::default();
+        purchase_agreement.buyer = None;
         purchase_agreement.price = price;
         purchase_agreement.status = AgreementStatus::ItemNotTransferred;
         purchase_agreement.item_name = name;
@@ -46,6 +46,7 @@ pub mod purchase {
             ],
         )?;
         let purchase_agreement = &mut ctx.accounts.purchase_agreement;
+        purchase_agreement.buyer = Some(*ctx.accounts.buyer.key);
         purchase_agreement.status = AgreementStatus::PaymentDone;
 
         Ok(())
@@ -88,7 +89,8 @@ pub mod purchase {
 pub struct PurchaseAgreement {
     pub price: u64,
     pub seller: Pubkey,
-    pub buyer: Pubkey,
+    /// CHECK: This is not dangerous because The buyer field is set only after a successful payment, ensuring it's safe to access
+    pub buyer: Option<Pubkey>,
     pub status: AgreementStatus,
     pub item_name: String,
 }
@@ -113,7 +115,7 @@ pub struct MakePayment<'info> {
     #[account(mut)]
     pub purchase_agreement: Account<'info, PurchaseAgreement>,
     #[account(mut)]
-    pub buyer: AccountInfo<'info>,
+    pub buyer: Signer<'info>,
     pub system_program: Program<'info, System>,
 }
 

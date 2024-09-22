@@ -13,11 +13,13 @@ pub mod purchase {
         name: String,
     ) -> Result<()> {
         let purchase_agreement = &mut ctx.accounts.purchase_agreement;
-        purchase_agreement.seller = *ctx.accounts.user.key;
+        purchase_agreement.seller = *ctx.accounts.seller.key;
         purchase_agreement.buyer = None;
         purchase_agreement.price = price;
         purchase_agreement.status = AgreementStatus::ItemNotTransferred;
         purchase_agreement.item_name = name;
+        
+
         Ok(())
     }
     pub fn make_payment(ctx: Context<MakePayment>) -> Result<()> {
@@ -33,7 +35,7 @@ pub mod purchase {
 
         let tx = system_instruction::transfer(
             &ctx.accounts.buyer.key(),
-            &ctx.accounts.purchase_agreement.key(),
+            &ctx.accounts.seller.key(),
             amount,
         );
 
@@ -41,7 +43,7 @@ pub mod purchase {
             &tx,
             &[
                 ctx.accounts.buyer.to_account_info(),
-                ctx.accounts.purchase_agreement.to_account_info(),
+                ctx.accounts.seller.to_account_info(),
                 ctx.accounts.system_program.to_account_info(),
             ],
         )?;
@@ -59,23 +61,7 @@ pub mod purchase {
             return Err(PurchaseErrors::PurchaseAlreadyCompleted.into());
         }
 
-        if purchase_agreement.status == AgreementStatus::PaymentDone {
-            let amount = purchase_agreement.price;
-            let tx = system_instruction::transfer(
-                &ctx.accounts.purchase_agreement.key(),
-                &ctx.accounts.seller.key(),
-                amount,
-            );
-
-            invoke(
-                &tx,
-                &[
-                    ctx.accounts.purchase_agreement.to_account_info(),
-                    ctx.accounts.seller.to_account_info(),
-                    ctx.accounts.system_program.to_account_info(),
-                ],
-            )?;
-        } else {
+        if purchase_agreement.status != AgreementStatus::PaymentDone {
             return Err(PurchaseErrors::PaymentNotReceived.into());
         }
         let purchase_agreement = &mut ctx.accounts.purchase_agreement;
@@ -103,10 +89,10 @@ pub enum AgreementStatus {
 
 #[derive(Accounts)]
 pub struct InitializePurchase<'info> {
-    #[account(init, payer = user, space = 8 + std::mem::size_of::<PurchaseAgreement>())]
+    #[account(init, payer = seller, space = 8 + std::mem::size_of::<PurchaseAgreement>())]
     pub purchase_agreement: Account<'info, PurchaseAgreement>,
     #[account(mut)]
-    pub user: Signer<'info>,
+    pub seller: Signer<'info>,
     pub system_program: Program<'info, System>,
 }
 
@@ -114,6 +100,8 @@ pub struct InitializePurchase<'info> {
 pub struct MakePayment<'info> {
     #[account(mut)]
     pub purchase_agreement: Account<'info, PurchaseAgreement>,
+     #[account(mut)]
+    pub seller: Signer<'info>,
     #[account(mut)]
     pub buyer: Signer<'info>,
     pub system_program: Program<'info, System>,

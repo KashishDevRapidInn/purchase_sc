@@ -1,16 +1,90 @@
 import * as anchor from "@coral-xyz/anchor";
-import { Program } from "@coral-xyz/anchor";
+import { BN, Program } from "@coral-xyz/anchor";
+import { Keypair } from "@solana/web3.js";
+import { expect } from "chai";
+import bs58 from "bs58";
 import { Purchase } from "../target/types/purchase";
+import dotenv from "dotenv";
+
+dotenv.config();
+const phantomSecretKeyBase58_buyer = process.env.PHANTOM_SECRET_KEY_BUYER;
+const user_pk_buyer = bs58.decode(phantomSecretKeyBase58_buyer);
+const phantomKeypair_buyer = Keypair.fromSecretKey(user_pk_buyer);
+
+const phantomSecretKeyBase58_seller = process.env.PHANTOM_SECRET_KEY_SELLER;
+const user_pk_seller = bs58.decode(phantomSecretKeyBase58_seller);
+const phantomKeypair_seller = Keypair.fromSecretKey(user_pk_seller);
 
 describe("purchase", () => {
-  // Configure the client to use the local cluster.
-  anchor.setProvider(anchor.AnchorProvider.env());
+  const provider = anchor.AnchorProvider.env();
+  anchor.setProvider(provider);
 
   const program = anchor.workspace.Purchase as Program<Purchase>;
+  const purchaseAgreementKeypair = Keypair.generate();
 
-  it("Is initialized!", async () => {
-    // Add your test here.
-    const tx = await program.methods.initialize().rpc();
-    console.log("Your transaction signature", tx);
+  const price = new BN(10);
+  const itemName = "Mug";
+
+  it("Setup Purchase!", async () => {
+    console.log(anchor.web3.SystemProgram.programId);
+    console.log(
+      "Seller Public Key:",
+      phantomKeypair_seller.publicKey.toString()
+    );
+    await program.methods
+      .initializePurchase(price, itemName.toString())
+      .accounts({
+        purchaseAgreement: purchaseAgreementKeypair.publicKey,
+        seller: phantomKeypair_seller.publicKey,
+        systemProgram: anchor.web3.SystemProgram.programId,
+      })
+      .signers([purchaseAgreementKeypair, phantomKeypair_seller])
+      .rpc();
+
+    const purchaseState = await program.account.purchaseAgreement.fetch(
+      purchaseAgreementKeypair.publicKey
+    );
+
+    expect(purchaseState.seller.toString()).to.equal(
+      phantomKeypair_seller.publicKey.toString()
+    );
+    expect(purchaseState.price.toNumber()).to.equal(price.toNumber());
+    expect(purchaseState.status).to.eql({ itemNotTransferred: {} });
+    expect(purchaseState.itemName).to.equal(itemName);
+  });
+  it("Making Payment", async () => {
+    const system_program = anchor.web3.SystemProgram.programId;
+    console.log(system_program);
+    await program.methods
+      .makePayment()
+      .accounts({
+        purchaseAgreement: purchaseAgreementKeypair.publicKey,
+        buyer: phantomKeypair_buyer.publicKey,
+        seller: phantomKeypair_seller.publicKey,
+        systemProgram: anchor.web3.SystemProgram.programId,
+      })
+      .signers([phantomKeypair_buyer, phantomKeypair_seller])
+      .rpc();
+    const purchaseState = await program.account.purchaseAgreement.fetch(
+      purchaseAgreementKeypair.publicKey
+    );
+    expect(purchaseState.status).to.eql({ paymentDone: {} });
+  });
+  it("Complete Purchase", async () => {
+    console.log(anchor.web3.SystemProgram.programId);
+    await program.methods
+      .completePurchase()
+      .accounts({
+        purchaseAgreement: purchaseAgreementKeypair.publicKey,
+        seller: phantomKeypair_seller.publicKey,
+        systemProgram: anchor.web3.SystemProgram.programId,
+      })
+      .signers([phantomKeypair_seller])
+      .rpc();
+
+    const purchaseState = await program.account.purchaseAgreement.fetch(
+      purchaseAgreementKeypair.publicKey
+    );
+    expect(purchaseState.status).to.eql({ purchaseCompleted: {} });
   });
 });

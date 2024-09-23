@@ -1,4 +1,7 @@
 use anchor_lang::prelude::*;
+
+use anchor_spl::token::Mint;
+use anchor_spl::token::{self, Token, TokenAccount};
 declare_id!("C6zXf83fM3aAac1t9AHh7AR6tYoMuB6nbYAhiMP7SV2K");
 
 #[program]
@@ -6,20 +9,38 @@ pub mod purchase {
     use super::*;
     use anchor_lang::solana_program::program::invoke;
     use anchor_lang::solana_program::system_instruction;
+    use anchor_spl::token::{self, Approve};
 
     pub fn initialize_purchase(
         ctx: Context<InitializePurchase>,
         price: u64,
-        name: String,
+        nft_id: Pubkey,
+        start_time: u64,
+        end_time: u64,
     ) -> Result<()> {
         let purchase_agreement = &mut ctx.accounts.purchase_agreement;
+        // let (agreement_pda, bump) = Pubkey::find_program_address(
+        //     &[b"purchase_agreement", nft_id.as_bytes()],
+        //     ctx.program_id,
+        // );
+
         purchase_agreement.seller = *ctx.accounts.seller.key;
         purchase_agreement.buyer = None;
         purchase_agreement.price = price;
         purchase_agreement.status = AgreementStatus::ItemNotTransferred;
-        purchase_agreement.item_name = name;
-        
+        purchase_agreement.nft_id = nft_id;
+        purchase_agreement.start_time = start_time;
+        purchase_agreement.end_time = end_time;
+        purchase_agreement.nft_status = NftStatus::Active;
+        // purchase_agreement.pda = agreement_pda;
 
+        let cpi_accounts = Approve {
+            to: ctx.accounts.nft_holding_account.to_account_info(),
+            delegate: ctx.accounts.purchase_agreement.to_account_info(), //state a/c
+            authority: ctx.accounts.seller.to_account_info(),
+        };
+        let cpi_ctx = CpiContext::new(ctx.accounts.token_program.to_account_info(), cpi_accounts);
+        token::approve(cpi_ctx, 1)?; // Adjust the amount if necessary
         Ok(())
     }
     pub fn make_payment(ctx: Context<MakePayment>) -> Result<()> {
@@ -50,23 +71,17 @@ pub mod purchase {
         let purchase_agreement = &mut ctx.accounts.purchase_agreement;
         purchase_agreement.buyer = Some(*ctx.accounts.buyer.key);
         purchase_agreement.status = AgreementStatus::PaymentDone;
+        purchase_agreement.nft_status = NftStatus::Sold;
 
-        Ok(())
-    }
+        let cpi_accounts = token::Transfer {
+            from: ctx.accounts.nft_holding_account.to_account_info(),
+            to: ctx.accounts.buyer_nft_account.to_account_info(),
+            authority: purchase_agreement.to_account_info(),
+        };
 
-    pub fn complete_purchase(ctx: Context<CompletePurchase>) -> Result<()> {
-        let purchase_agreement = &ctx.accounts.purchase_agreement;
-
-        if purchase_agreement.status == AgreementStatus::PurchaseCompleted {
-            return Err(PurchaseErrors::PurchaseAlreadyCompleted.into());
-        }
-
-        if purchase_agreement.status != AgreementStatus::PaymentDone {
-            return Err(PurchaseErrors::PaymentNotReceived.into());
-        }
-        let purchase_agreement = &mut ctx.accounts.purchase_agreement;
+        let cpi_ctx = CpiContext::new(ctx.accounts.token_program.to_account_info(), cpi_accounts);
+        token::transfer(cpi_ctx, 1)?;
         purchase_agreement.status = AgreementStatus::PurchaseCompleted;
-
         Ok(())
     }
 }
@@ -75,10 +90,12 @@ pub mod purchase {
 pub struct PurchaseAgreement {
     pub price: u64,
     pub seller: Pubkey,
-    /// CHECK: This is not dangerous because The buyer field is set only after a successful payment, ensuring it's safe to access
     pub buyer: Option<Pubkey>,
     pub status: AgreementStatus,
-    pub item_name: String,
+    pub nft_id: Pubkey,
+    pub start_time: u64,
+    pub end_time: u64,
+    pub nft_status: NftStatus,
 }
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, PartialEq, Eq)]
 pub enum AgreementStatus {
@@ -87,33 +104,43 @@ pub enum AgreementStatus {
     PurchaseCompleted,
 }
 
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, PartialEq, Eq)]
+pub enum NftStatus {
+    Active,
+    Sold,
+    NotAvailable,
+}
+
 #[derive(Accounts)]
 pub struct InitializePurchase<'info> {
-    #[account(init, payer = seller, space = 8 + std::mem::size_of::<PurchaseAgreement>())]
+    #[account(init, payer = seller, space = 144)]
     pub purchase_agreement: Account<'info, PurchaseAgreement>,
     #[account(mut)]
     pub seller: Signer<'info>,
     pub system_program: Program<'info, System>,
+    #[account(mut)]
+    pub nft_account: Account<'info, token::TokenAccount>,
+    #[account(address = nft_account.mint)] // Ensure this matches the mint of the NFT
+    pub nft_mint: Account<'info, Mint>, // Mint account for the NFT
+    pub token_program: Program<'info, Token>,
+    #[account(init, payer = seller, token::mint = nft_mint, token::authority = seller)]
+    pub nft_holding_account: Account<'info, TokenAccount>,
 }
 
 #[derive(Accounts)]
 pub struct MakePayment<'info> {
     #[account(mut)]
     pub purchase_agreement: Account<'info, PurchaseAgreement>,
-     #[account(mut)]
+    #[account(mut)]
     pub seller: Signer<'info>,
     #[account(mut)]
     pub buyer: Signer<'info>,
     pub system_program: Program<'info, System>,
-}
-
-#[derive(Accounts)]
-pub struct CompletePurchase<'info> {
     #[account(mut)]
-    pub purchase_agreement: Account<'info, PurchaseAgreement>,
+    pub buyer_nft_account: Account<'info, TokenAccount>,
+    pub token_program: Program<'info, Token>,
     #[account(mut)]
-    pub seller: Signer<'info>,
-    pub system_program: Program<'info, System>,
+    pub nft_holding_account: Account<'info, TokenAccount>,
 }
 
 #[error_code]
@@ -122,3 +149,5 @@ pub enum PurchaseErrors {
     PurchaseAlreadyCompleted,
     PaymentNotReceived,
 }
+
+// active, sold, Not available

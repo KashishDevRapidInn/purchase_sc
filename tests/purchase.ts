@@ -21,8 +21,10 @@ describe("purchase", () => {
 
   const program = anchor.workspace.Purchase as Program<Purchase>;
   const purchaseAgreementKeypair = Keypair.generate();
-
+  const startTime = Math.floor(Date.now() / 1000); // Current time in seconds
+  const endTime = startTime + 3600; // 1 hour later
   const price = new BN(10);
+  const nft_id = "6nzTzVZAVq4E5iuPMhcir8ESF9dLjCDgRV7yRgkU8Vbz";
   const itemName = "Mug";
 
   it("Setup Purchase!", async () => {
@@ -32,7 +34,7 @@ describe("purchase", () => {
       phantomKeypair_seller.publicKey.toString()
     );
     await program.methods
-      .initializePurchase(price, itemName.toString())
+      .initializePurchase(price, nft_id, new BN(startTime), new BN(endTime))
       .accounts({
         purchaseAgreement: purchaseAgreementKeypair.publicKey,
         seller: phantomKeypair_seller.publicKey,
@@ -69,22 +71,5 @@ describe("purchase", () => {
       purchaseAgreementKeypair.publicKey
     );
     expect(purchaseState.status).to.eql({ paymentDone: {} });
-  });
-  it("Complete Purchase", async () => {
-    console.log(anchor.web3.SystemProgram.programId);
-    await program.methods
-      .completePurchase()
-      .accounts({
-        purchaseAgreement: purchaseAgreementKeypair.publicKey,
-        seller: phantomKeypair_seller.publicKey,
-        systemProgram: anchor.web3.SystemProgram.programId,
-      })
-      .signers([phantomKeypair_seller])
-      .rpc();
-
-    const purchaseState = await program.account.purchaseAgreement.fetch(
-      purchaseAgreementKeypair.publicKey
-    );
-    expect(purchaseState.status).to.eql({ purchaseCompleted: {} });
   });
 });
